@@ -2,44 +2,22 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:15
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: wadah
+      POSTGRES_PASSWORD: wadah123
+      POSTGRES_DB: wadah
     ports:
       - "5432:5432"
-    environment:
-      POSTGRES_USER: klola
-      POSTGRES_PASSWORD: klola_secret
-      POSTGRES_DB: klola_platform
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
   redis:
-    image: redis:7
+    image: redis:7-alpine
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
-
-  elasticsearch:
-    image: elasticsearch:8.7.0
-    ports:
-      - "9200:9200"
-    environment:
-      - discovery.type=single-node
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-      - xpack.security.enabled=false
-    volumes:
-      - elasticsearch_data:/usr/share/elasticsearch/data
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    environment:
-      RABBITMQ_DEFAULT_USER: klola
-      RABBITMQ_DEFAULT_PASS: klola_secret
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
 
   minio:
     image: minio/minio
@@ -47,94 +25,13 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: klola
-      MINIO_ROOT_PASSWORD: klola_secret
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
 
-  core-platform:
-    build:
-      context: .
-      dockerfile: services/core-platform/Dockerfile
-    ports:
-      - "8001:8000"
-    depends_on:
-      - postgres
-      - redis
-    environment:
-      DATABASE_URL: postgres://klola:klola_secret@postgres:5432/klola_platform
-      REDIS_URL: redis://redis:6379
-
-  unified-product:
-    build:
-      context: .
-      dockerfile: services/unified-product/Dockerfile
-    ports:
-      - "8002:8000"
-    depends_on:
-      - postgres
-      - redis
-      - core-platform
-    environment:
-      DATABASE_URL: postgres://klola:klola_secret@postgres:5432/klola_platform
-      REDIS_URL: redis://redis:6379
-      CORE_PLATFORM_URL: http://core-platform:8000
-
-  file-storage:
-    build:
-      context: .
-      dockerfile: services/file-storage/Dockerfile
-    ports:
-      - "8003:8000"
-    depends_on:
-      - postgres
-      - minio
-      - core-platform
-    environment:
-      DATABASE_URL: postgres://klola:klola_secret@postgres:5432/klola_platform
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: klola
-      MINIO_SECRET_KEY: klola_secret
-      CORE_PLATFORM_URL: http://core-platform:8000
-
-  notification:
-    build:
-      context: .
-      dockerfile: services/notification/Dockerfile
-    ports:
-      - "8004:8000"
-    depends_on:
-      - postgres
-      - rabbitmq
-      - core-platform
-    environment:
-      DATABASE_URL: postgres://klola:klola_secret@postgres:5432/klola_platform
-      RABBITMQ_URL: amqp://klola:klola_secret@rabbitmq:5672
-      CORE_PLATFORM_URL: http://core-platform:8000
-
-  infrastructure:
-    build:
-      context: .
-      dockerfile: services/infrastructure/Dockerfile
-    ports:
-      - "8005:8000"
-    depends_on:
-      - postgres
-      - redis
-      - elasticsearch
-      - rabbitmq
-      - core-platform
-    environment:
-      DATABASE_URL: postgres://klola:klola_secret@postgres:5432/klola_platform
-      REDIS_URL: redis://redis:6379
-      ELASTICSEARCH_URL: http://elasticsearch:9200
-      RABBITMQ_URL: amqp://klola:klola_secret@rabbitmq:5672
-      CORE_PLATFORM_URL: http://core-platform:8000
-
 volumes:
   postgres_data:
   redis_data:
-  elasticsearch_data:
-  rabbitmq_data:
   minio_data:
