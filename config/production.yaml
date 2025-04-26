@@ -1,0 +1,22 @@
+environment: production
+
+server:
+  host: "0.0.0.0"
+  request_timeout: 60
+  graceful_shutdown_timeout: 60
+
+database:
+  max_connections: 200
+  min_connections: 10
+
+redis:
+  pool_max_open: 200
+  pool_max_idle: 20
+
+minio:
+  use_ssl: true
+
+telemetry:
+  log_level: "info"
+  jaeger_endpoint: "http://jaeger:14268/api/traces"
+  datadog_endpoint: "http://datadog-agent:8126"
