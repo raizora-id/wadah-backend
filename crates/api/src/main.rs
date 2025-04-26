@@ -1,32 +1,43 @@
 use std::{net::SocketAddr, time::Duration};
 use axum::{
-    routing::get,
+    routing::{get, IntoMakeService},
     Router,
 };
 use infrastructure::{
     config::Config,
     persistence::postgres::PostgresUserRepository,
 };
+use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::postgres::PgPoolOptions;
 use tokio::signal;
 use tower::ServiceBuilder;
-use tower_http::{trace::TraceLayer, timeout::TimeoutLayer};
+use tower_http::{
+    compression::CompressionLayer,
+    trace::TraceLayer,
+    timeout::TimeoutLayer,
+};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+mod middleware;
+use middleware::{cors, metrics, rate_limit, request_id};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load configuration
     dotenv::dotenv().ok();
-    let config = Config::from_env()?;
+    let config = Config::new()?;
+
+    // Initialize metrics
+    metrics::setup_metrics_recorder();
+    let prometheus_handle = setup_prometheus_metrics();
 
     // Initialize tracing with JSON format for production
-    let env = std::env::var("RUST_ENV").unwrap_or_else(|_| "development".into());
-    let is_prod = env == "production";
+    let is_prod = config.is_production();
+    let env_filter = tracing_subscriber::EnvFilter::new(
+        std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".into()),
+    );
 
-    let subscriber = tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".into()),
-        ));
+    let subscriber = tracing_subscriber::registry().with(env_filter);
 
     if is_prod {
         subscriber.with(tracing_subscriber::fmt::layer().json()).init();
@@ -48,16 +59,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize repositories
     let user_repository = PostgresUserRepository::new(pool.clone());
 
-    // Build our application with middleware stack
+    // Create middleware stack
+    let middleware_stack = ServiceBuilder::new()
+        .layer(request_id::create_request_id_middleware())
+        .layer(metrics::track_metrics)
+        .layer(TraceLayer::new_for_http())
+        .layer(cors::create_cors_middleware())
+        .layer(CompressionLayer::new())
+        .layer(TimeoutLayer::new(Duration::from_secs(30)));
+
+    if is_prod {
+        middleware_stack.layer(rate_limit::create_rate_limit_middleware());
+    }
+
+    // Build our application
     let app = Router::new()
         .route("/health", get(health_check))
+        .route("/metrics", get(move || metrics_handler(prometheus_handle.clone())))
         .route("/", get(|| async { "Hello, World!" }))
         .with_state(user_repository)
-        .layer(
-            ServiceBuilder::new()
-                .layer(TraceLayer::new_for_http())
-                .layer(TimeoutLayer::new(Duration::from_secs(30)))
-        );
+        .layer(middleware_stack.into_inner());
 
     // Setup graceful shutdown
     let addr = SocketAddr::from((
@@ -83,6 +104,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     pool.close().await;
 
     Ok(())
+}
+
+// Prometheus metrics handler
+async fn metrics_handler(prometheus_handle: PrometheusHandle) -> String {
+    prometheus_handle.render()
+}
+
+// Setup Prometheus metrics
+fn setup_prometheus_metrics() -> PrometheusHandle {
+    use metrics_exporter_prometheus::PrometheusBuilder;
+    PrometheusBuilder::new()
+        .install_recorder()
+        .expect("failed to install Prometheus recorder")
 }
 
 // Health check endpoint
